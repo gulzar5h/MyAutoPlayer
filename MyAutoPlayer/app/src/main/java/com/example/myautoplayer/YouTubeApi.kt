@@ -1,5 +1,6 @@
 package com.example.myautoplayer
 
+import android.util.Log
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
@@ -7,13 +8,10 @@ import retrofit2.http.Query
 import retrofit2.http.Path
 
 // --- DATA MODELS ---
-
-// 1. Search Response (Fixed the List error here)
 data class PipedSearchResponse(
-    val items: List<PipedVideo> 
+    val items: List<PipedVideo>? // Made nullable to prevent crashes
 )
 
-// 2. Single Video Result
 data class PipedVideo(
     val title: String, 
     val url: String, 
@@ -21,15 +19,8 @@ data class PipedVideo(
     val uploaderName: String
 )
 
-// 3. Audio Stream Response
-data class PipedStreamResponse(
-    val audioStreams: List<PipedAudioStream>
-)
-
-data class PipedAudioStream(
-    val url: String, 
-    val format: String
-)
+data class PipedStreamResponse(val audioStreams: List<PipedAudioStream>)
+data class PipedAudioStream(val url: String, val format: String)
 
 // --- API INTERFACE ---
 interface PipedService {
@@ -40,52 +31,72 @@ interface PipedService {
     ): PipedSearchResponse
 
     @GET("streams/{videoId}")
-    suspend fun getVideoStreams(
-        @Path("videoId") videoId: String
-    ): PipedStreamResponse
+    suspend fun getVideoStreams(@Path("videoId") videoId: String): PipedStreamResponse
 }
 
 // --- REPOSITORY ---
 object YouTubeRepository {
-    private val retrofit = Retrofit.Builder()
-        .baseUrl("https://pipedapi.kavin.rocks/") 
-        .addConverterFactory(GsonConverterFactory.create())
-        .build()
+    // PRIMARY SERVER (Faster)
+    private const val BASE_URL_1 = "https://pipedapi.kavin.rocks/" 
+    // BACKUP SERVER (If primary fails)
+    private const val BASE_URL_2 = "https://api.piped.otse.one/" 
 
-    private val service = retrofit.create(PipedService::class.java)
-
-    private fun extractId(url: String): String {
-        return if (url.contains("v=")) url.substringAfter("v=") else url
+    private fun createService(url: String): PipedService {
+        return Retrofit.Builder()
+            .baseUrl(url)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(PipedService::class.java)
     }
+
+    private val service1 = createService(BASE_URL_1)
+    private val service2 = createService(BASE_URL_2)
 
     suspend fun search(query: String): List<VideoItem> {
         return try {
-            val results = service.searchVideos(query)
-            // Convert Piped data to our App's data format
-            results.items.map { 
-                VideoItem(
-                    title = it.title,
-                    channelName = it.uploaderName,
-                    thumbnailUrl = it.thumbnail,
-                    audioStreamUrl = it.url 
-                )
-            }
+            // Try Server 1
+            Log.d("YouTubeApi", "Trying Server 1...")
+            val response = service1.searchVideos(query)
+            processResponse(response)
         } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
+            Log.e("YouTubeApi", "Server 1 Failed: ${e.message}")
+            try {
+                // Try Server 2
+                Log.d("YouTubeApi", "Trying Server 2...")
+                val response2 = service2.searchVideos(query)
+                processResponse(response2)
+            } catch (e2: Exception) {
+                Log.e("YouTubeApi", "All Servers Failed: ${e2.message}")
+                throw Exception("Connection Failed: ${e2.message}") // Throw to UI
+            }
         }
     }
 
+    private fun processResponse(response: PipedSearchResponse): List<VideoItem> {
+        return response.items?.map { 
+            VideoItem(
+                title = it.title,
+                channelName = it.uploaderName,
+                thumbnailUrl = it.thumbnail,
+                audioStreamUrl = it.url 
+            )
+        } ?: emptyList()
+    }
+
     suspend fun getAudioUrl(videoUrl: String): String? {
+        val id = if (videoUrl.contains("v=")) videoUrl.substringAfter("v=") else videoUrl
         return try {
-            val id = extractId(videoUrl)
-            val streams = service.getVideoStreams(id)
-            // Prioritize m4a, otherwise take whatever is first
+            val streams = service1.getVideoStreams(id)
             streams.audioStreams.find { it.format == "m4a" }?.url 
                 ?: streams.audioStreams.firstOrNull()?.url
         } catch (e: Exception) {
-            e.printStackTrace()
-            null
+            try {
+                val streams = service2.getVideoStreams(id)
+                streams.audioStreams.find { it.format == "m4a" }?.url 
+                    ?: streams.audioStreams.firstOrNull()?.url
+            } catch (e2: Exception) {
+                null
+            }
         }
     }
 }
