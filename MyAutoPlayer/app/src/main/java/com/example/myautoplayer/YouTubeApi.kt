@@ -8,27 +8,15 @@ import retrofit2.http.Query
 import retrofit2.http.Path
 
 // --- DATA MODELS ---
-data class PipedSearchResponse(
-    val items: List<PipedVideo>?
-)
-
-data class PipedVideo(
-    val title: String,
-    val url: String,
-    val thumbnail: String,
-    val uploaderName: String
-)
-
+data class PipedSearchResponse(val items: List<PipedVideo>?)
+data class PipedVideo(val title: String, val url: String, val thumbnail: String, val uploaderName: String)
 data class PipedStreamResponse(val audioStreams: List<PipedAudioStream>)
 data class PipedAudioStream(val url: String, val format: String)
 
 // --- API INTERFACE ---
 interface PipedService {
     @GET("search")
-    suspend fun searchVideos(
-        @Query("q") query: String,
-        @Query("filter") filter: String = "videos"
-    ): PipedSearchResponse
+    suspend fun searchVideos(@Query("q") query: String, @Query("filter") filter: String = "videos"): PipedSearchResponse
 
     @GET("streams/{videoId}")
     suspend fun getVideoStreams(@Path("videoId") videoId: String): PipedStreamResponse
@@ -36,9 +24,12 @@ interface PipedService {
 
 // --- REPOSITORY ---
 object YouTubeRepository {
-    // Primary and Backup Servers
-    private const val BASE_URL_1 = "https://pipedapi.kavin.rocks/"
-    private const val BASE_URL_2 = "https://api.piped.otse.one/"
+    // A list of stable servers to try in order
+    private val SERVERS = listOf(
+        "https://pipedapi.kavin.rocks/",       // Primary
+        "https://api.piped.projectsegfau.lt/", // Very Stable Backup
+        "https://pipedapi.adminforge.de/"      // Emergency Backup
+    )
 
     private fun createService(url: String): PipedService {
         return Retrofit.Builder()
@@ -48,52 +39,38 @@ object YouTubeRepository {
             .create(PipedService::class.java)
     }
 
-    private val service1 = createService(BASE_URL_1)
-    private val service2 = createService(BASE_URL_2)
-
     suspend fun search(query: String): List<VideoItem> {
-        return try {
-            Log.d("YouTubeApi", "Trying Server 1...")
-            val response = service1.searchVideos(query)
-            processResponse(response)
-        } catch (e: Exception) {
-            Log.e("YouTubeApi", "Server 1 Failed: ${e.message}")
+        // Try every server in the list until one works
+        for (url in SERVERS) {
             try {
-                Log.d("YouTubeApi", "Trying Server 2...")
-                val response2 = service2.searchVideos(query)
-                processResponse(response2)
-            } catch (e2: Exception) {
-                Log.e("YouTubeApi", "All Servers Failed: ${e2.message}")
-                throw Exception("Connection Failed: ${e2.message}")
+                Log.d("YouTubeApi", "Trying Server: $url")
+                val service = createService(url)
+                val response = service.searchVideos(query)
+                return response.items?.map { 
+                    VideoItem(it.title, it.uploaderName, it.thumbnail, it.url) 
+                } ?: emptyList()
+            } catch (e: Exception) {
+                Log.e("YouTubeApi", "Failed $url: ${e.message}")
+                // Continue to next server...
             }
         }
-    }
-
-    private fun processResponse(response: PipedSearchResponse): List<VideoItem> {
-        return response.items?.map {
-            VideoItem(
-                title = it.title,
-                channelName = it.uploaderName,
-                thumbnailUrl = it.thumbnail,
-                audioStreamUrl = it.url
-            )
-        } ?: emptyList()
+        throw Exception("All servers failed. Check Internet.")
     }
 
     suspend fun getAudioUrl(videoUrl: String): String? {
         val id = if (videoUrl.contains("v=")) videoUrl.substringAfter("v=") else videoUrl
-        return try {
-            val streams = service1.getVideoStreams(id)
-            streams.audioStreams.find { it.format == "m4a" }?.url
-                ?: streams.audioStreams.firstOrNull()?.url
-        } catch (e: Exception) {
+        
+        for (url in SERVERS) {
             try {
-                val streams = service2.getVideoStreams(id)
-                streams.audioStreams.find { it.format == "m4a" }?.url
+                val service = createService(url)
+                val streams = service.getVideoStreams(id)
+                // Return the first valid m4a link we find
+                return streams.audioStreams.find { it.format == "m4a" }?.url 
                     ?: streams.audioStreams.firstOrNull()?.url
-            } catch (e2: Exception) {
-                null
+            } catch (e: Exception) {
+                continue // Try next server
             }
         }
+        return null
     }
 }
