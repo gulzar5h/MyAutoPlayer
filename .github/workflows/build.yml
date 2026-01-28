@@ -8,24 +8,26 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4  # Updated to v4
+      uses: actions/checkout@v4
 
     - name: Set up JDK 17
-      uses: actions/setup-java@v4 # Updated to v4
+      uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v3 # Updated to correct Gradle action
+      uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.1.1' 
 
     - name: Build APK
-      run: gradle assembleDebug
+      # FIX 1: We use 'cd' to change directory into your folder before building
+      run: cd MyAutoPlayer && gradle assembleDebug
 
     - name: Upload APK
-      uses: actions/upload-artifact@v4  # <--- THIS WAS THE ERROR (Fixed to v4)
+      uses: actions/upload-artifact@v4
       with:
         name: my-auto-player
-        path: app/build/outputs/apk/debug/app-debug.apk
+        # FIX 2: We updated the path to look inside the MyAutoPlayer folder
+        path: MyAutoPlayer/app/build/outputs/apk/debug/app-debug.apk
