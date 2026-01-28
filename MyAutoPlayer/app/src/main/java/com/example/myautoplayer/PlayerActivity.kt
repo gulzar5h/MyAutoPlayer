@@ -17,7 +17,32 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        // ... inside onCreate ...
+
+        searchButton.setOnClickListener {
+            val query = searchBox.text.toString()
+            if (query.isBlank()) return@setOnClickListener
+
+            Toast.makeText(this, "Searching...", Toast.LENGTH_SHORT).show()
+            
+            lifecycleScope.launch {
+                try {
+                    val videos = YouTubeRepository.search(query)
+                    
+                    if (videos.isEmpty()) {
+                        Toast.makeText(this@PlayerActivity, "No videos found.", Toast.LENGTH_LONG).show()
+                    } else {
+                        recyclerView.adapter = VideoAdapter(videos) { video ->
+                            playVideo(video)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // THIS WILL SHOW THE ERROR ON SCREEN
+                    Toast.makeText(this@PlayerActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         // Create a simple UI: [Search Box] [Button] [List]
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val searchBox = EditText(this).apply { hint = "Search YouTube..." }
@@ -69,3 +94,4 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 }
+
